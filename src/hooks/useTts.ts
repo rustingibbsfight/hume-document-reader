@@ -30,7 +30,7 @@ export function useTts() {
   const pendingChunksRef = useRef<Uint8Array[]>([]);
   const isAppendingRef = useRef(false);
   const streamCompleteRef = useRef(false);
-  const allAudioChunksRef = useRef<Uint8Array[]>([]); // For fallback mode
+  const allAudioChunksRef = useRef<Uint8Array[]>([]);
 
   const cleanup = useCallback(() => {
     if (abortControllerRef.current) {
@@ -40,6 +40,7 @@ export function useTts() {
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.src = "";
+      audioRef.current = null;
     }
     mediaSourceRef.current = null;
     sourceBufferRef.current = null;
@@ -86,6 +87,22 @@ export function useTts() {
     voiceProvider: VoiceProvider
   ) => {
     cleanup();
+    
+    // Create audio element immediately on user gesture
+    const audio = new Audio();
+    audio.setAttribute('playsinline', 'true');
+    audio.setAttribute('webkit-playsinline', 'true');
+    audioRef.current = audio;
+    
+    // Play silent audio to unlock on iOS (must happen synchronously with user gesture)
+    const silentDataUri = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAGAAGn9AAAIgAANP8AAAARERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERER//tQxAADwAADSAAAAAAAAA0gAAABEREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREQ==';
+    audio.src = silentDataUri;
+    
+    try {
+      await audio.play();
+    } catch (e) {
+      console.log("Silent audio play failed, continuing anyway:", e);
+    }
     
     setState(prev => ({
       ...prev,
@@ -168,8 +185,8 @@ export function useTts() {
       const blob = new Blob([combined], { type: 'audio/mpeg' });
       const url = URL.createObjectURL(blob);
       
-      const audio = new Audio(url);
-      audioRef.current = audio;
+      // Reuse the same audio element (already unlocked)
+      audio.src = url;
       
       audio.onended = () => {
         setState(prev => ({ ...prev, isPlaying: false, progress: 100 }));
