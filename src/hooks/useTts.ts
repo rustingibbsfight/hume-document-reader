@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, MutableRefObject } from "react";
 import type { ReturnVoice } from "hume/api/resources/tts";
 
 interface TtsState {
@@ -14,7 +14,7 @@ interface TtsState {
 // Check if MediaSource is supported (not on iOS Safari)
 const isMediaSourceSupported = typeof window !== 'undefined' && 'MediaSource' in window;
 
-export function useTts() {
+export function useTts(voiceRef: MutableRefObject<ReturnVoice | null>) {
   const [state, setState] = useState<TtsState>({
     isPlaying: false,
     isPaused: false,
@@ -33,8 +33,7 @@ export function useTts() {
   const isAppendingRef = useRef(false);
   const streamCompleteRef = useRef(false);
 
-  const cleanup = useCallback(() => {
-    console.log("[TTS] Cleanup called");
+  function cleanup() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -49,9 +48,9 @@ export function useTts() {
     pendingChunksRef.current = [];
     isAppendingRef.current = false;
     streamCompleteRef.current = false;
-  }, []);
+  }
 
-  const appendNextChunk = useCallback(() => {
+  function appendNextChunk() {
     const sourceBuffer = sourceBufferRef.current;
     const mediaSource = mediaSourceRef.current;
     
@@ -63,9 +62,7 @@ export function useTts() {
       if (streamCompleteRef.current && mediaSource?.readyState === "open") {
         try {
           mediaSource.endOfStream();
-        } catch (e) {
-          console.warn("Error ending stream:", e);
-        }
+        } catch (e) {}
       }
       return;
     }
@@ -76,30 +73,29 @@ export function useTts() {
     try {
       sourceBuffer.appendBuffer(chunk.buffer as ArrayBuffer);
     } catch (e) {
-      console.error("Error appending buffer:", e);
       isAppendingRef.current = false;
     }
-  }, []);
+  }
 
-  // iOS fallback - collect chunks then play
-  const speakFallback = useCallback(async (
-    text: string,
-    voice: ReturnVoice | null
-  ) => {
+  async function speakFallback(text: string) {
     cleanup();
     
-    console.log("[TTS] speakFallback called with voice:", voice?.name);
+    // Read voice from ref RIGHT NOW - not from a parameter
+    const voice = voiceRef.current;
+    console.log("[TTS] speakFallback - reading voiceRef.current:", voice?.name);
     
-    // Create audio element immediately on user gesture
     const audio = new Audio();
     audio.setAttribute('playsinline', 'true');
     audio.setAttribute('webkit-playsinline', 'true');
     audioRef.current = audio;
     
-    // Unlock audio on iOS with silent audio
+    // Unlock audio on iOS
     const silentDataUri = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAGAAGn9AAAIgAANP8AAAARERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERER//tQxAADwAADSAAAAAAAAA0gAAABEREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREQ==';
     audio.src = silentDataUri;
-    try { await audio.play(); } catch (e) { console.log("Silent play failed:", e); }
+    
+    try { 
+      await audio.play(); 
+    } catch (e) {}
     
     setState(prev => ({
       ...prev,
@@ -113,16 +109,18 @@ export function useTts() {
     }));
 
     abortControllerRef.current = new AbortController();
-    const allChunks: Uint8Array[] = [];
 
     try {
+      // Read voice from ref AGAIN right before API call - guaranteed fresh
+      const currentVoice = voiceRef.current;
+      console.log("[TTS] About to call API with voice:", currentVoice?.name);
+      
       const requestBody = {
         text,
-        voiceName: voice?.name || null,
-        voiceProvider: voice?.provider || "HUME_AI",
+        voiceName: currentVoice?.name || null,
+        voiceProvider: currentVoice?.provider || "HUME_AI",
         instant: true,
       };
-      console.log("[TTS] API request:", requestBody);
 
       const res = await fetch("/api/tts", {
         method: "POST",
@@ -139,6 +137,7 @@ export function useTts() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      const allChunks: Uint8Array[] = [];
 
       while (true) {
         const { value, done } = await reader.read();
@@ -168,7 +167,6 @@ export function useTts() {
         }
       }
 
-      // Combine all chunks
       const totalLength = allChunks.reduce((acc, chunk) => acc + chunk.length, 0);
       const combined = new Uint8Array(totalLength);
       let offset = 0;
@@ -185,31 +183,24 @@ export function useTts() {
         setState(prev => ({ ...prev, isPlaying: false, isPaused: false, progress: 100 }));
         URL.revokeObjectURL(url);
       };
-      audio.onerror = (e) => {
-        console.error("Audio error:", e);
-        setState(prev => ({ ...prev, isPlaying: false, error: "Playback error" }));
-      };
 
       setState(prev => ({ ...prev, isLoading: false, isPlaying: true }));
       await audio.play();
 
     } catch (error: any) {
       if (error.name !== "AbortError") {
-        console.error("[TTS] Error:", error);
         setState(prev => ({ ...prev, error: error.message || "Failed to generate speech" }));
       }
       setState(prev => ({ ...prev, isPlaying: false, isPaused: false, isLoading: false }));
     }
-  }, [cleanup]);
+  }
 
-  // Desktop streaming with MediaSource
-  const speakStreaming = useCallback(async (
-    text: string,
-    voice: ReturnVoice | null
-  ) => {
+  async function speakStreaming(text: string) {
     cleanup();
     
-    console.log("[TTS] speakStreaming called with voice:", voice?.name);
+    // Read voice from ref
+    const voice = voiceRef.current;
+    console.log("[TTS] speakStreaming - reading voiceRef.current:", voice?.name);
     
     setState(prev => ({
       ...prev,
@@ -247,7 +238,7 @@ export function useTts() {
         mediaSource.addEventListener("error", () => reject(new Error("MediaSource error")), { once: true });
       });
 
-      audio.play().catch(console.warn);
+      audio.play().catch(() => {});
 
       const requestBody = {
         text,
@@ -255,7 +246,6 @@ export function useTts() {
         voiceProvider: voice?.provider || "HUME_AI",
         instant: true,
       };
-      console.log("[TTS] API request:", requestBody);
 
       const res = await fetch("/api/tts", {
         method: "POST",
@@ -316,25 +306,23 @@ export function useTts() {
 
     } catch (error: any) {
       if (error.name !== "AbortError") {
-        console.error("[TTS] Error:", error);
         setState(prev => ({ ...prev, error: error.message || "Failed to generate speech" }));
       }
       setState(prev => ({ ...prev, isPlaying: false, isPaused: false, isLoading: false }));
     }
-  }, [cleanup, appendNextChunk]);
+  }
 
-  // Main speak function - takes voice directly as parameter
-  const speak = useCallback((text: string, voice: ReturnVoice | null) => {
-    console.log("[TTS] speak() called with voice:", voice?.name, "provider:", voice?.provider);
+  function speak(text: string) {
+    console.log("[TTS] speak() called, voiceRef.current:", voiceRef.current?.name);
     
     if (isMediaSourceSupported) {
-      return speakStreaming(text, voice);
+      speakStreaming(text);
     } else {
-      return speakFallback(text, voice);
+      speakFallback(text);
     }
-  }, [speakStreaming, speakFallback]);
+  }
 
-  const stop = useCallback(() => {
+  function stop() {
     cleanup();
     setState(prev => ({
       ...prev,
@@ -342,21 +330,21 @@ export function useTts() {
       isPaused: false,
       isLoading: false,
     }));
-  }, [cleanup]);
+  }
 
-  const pause = useCallback(() => {
+  function pause() {
     if (audioRef.current) {
       audioRef.current.pause();
     }
     setState(prev => ({ ...prev, isPlaying: false, isPaused: true }));
-  }, []);
+  }
 
-  const resume = useCallback(() => {
+  function resume() {
     if (audioRef.current) {
-      audioRef.current.play().catch(console.warn);
+      audioRef.current.play().catch(() => {});
     }
     setState(prev => ({ ...prev, isPlaying: true, isPaused: false }));
-  }, []);
+  }
 
   return {
     ...state,
@@ -364,6 +352,5 @@ export function useTts() {
     stop,
     pause,
     resume,
-    audioRef,
   };
 }

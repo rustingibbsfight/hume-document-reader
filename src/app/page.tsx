@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import type { ReturnVoice } from "hume/api/resources/tts";
 import DocumentInput from "@/components/DocumentInput";
 import VoiceSelector from "@/components/VoiceSelector";
@@ -7,12 +7,12 @@ import PlaybackControls from "@/components/PlaybackControls";
 import { useTts } from "@/hooks/useTts";
 import { SpeakerWaveIcon, BookOpenIcon } from "@heroicons/react/24/outline";
 
-// Store voice outside React entirely - this will never be stale
-let globalVoice: ReturnVoice | null = null;
-
 export default function Home() {
   const [text, setText] = useState("");
   const [selectedVoice, setSelectedVoice] = useState<ReturnVoice | null>(null);
+  
+  // This ref is passed to useTts - the hook reads directly from it
+  const voiceRef = useRef<ReturnVoice | null>(null);
   
   const {
     isPlaying,
@@ -25,19 +25,16 @@ export default function Home() {
     stop,
     pause,
     resume,
-  } = useTts();
+  } = useTts(voiceRef);
 
   function handlePlay() {
-    console.log("[Page] handlePlay called");
-    console.log("[Page] globalVoice:", globalVoice?.name);
-    console.log("[Page] selectedVoice state:", selectedVoice?.name);
+    console.log("[Page] handlePlay - voiceRef.current:", voiceRef.current?.name);
     
     if (isPaused) {
       resume();
     } else {
       stop();
-      // Use globalVoice which is guaranteed to be current
-      speak(text, globalVoice);
+      speak(text);
     }
   }
 
@@ -50,14 +47,15 @@ export default function Home() {
   }
 
   function handleVoiceSelect(voice: ReturnVoice | null) {
-    console.log("[Page] handleVoiceSelect called with:", voice?.name);
+    console.log("[Page] handleVoiceSelect:", voice?.name);
     
-    // Update global variable FIRST (completely synchronous, outside React)
-    globalVoice = voice;
-    console.log("[Page] globalVoice updated to:", globalVoice?.name);
+    // Update ref IMMEDIATELY (synchronous, no React batching)
+    voiceRef.current = voice;
     
-    // Then update React state
+    // Also update state for UI
     setSelectedVoice(voice);
+    
+    console.log("[Page] voiceRef.current is now:", voiceRef.current?.name);
     
     if (isPlaying || isPaused) {
       stop();
