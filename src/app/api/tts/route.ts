@@ -27,7 +27,6 @@ function splitTextIntoChunks(text: string, maxSize: number): string[] {
       if (currentChunk) {
         chunks.push(currentChunk);
       }
-      // If a single sentence is too long, split it at word boundaries
       if (trimmedSentence.length > maxSize) {
         const words = trimmedSentence.split(/\s+/);
         currentChunk = "";
@@ -53,13 +52,22 @@ function splitTextIntoChunks(text: string, maxSize: number): string[] {
 }
 
 export async function POST(req: NextRequest) {
-  const { text, voiceName, voiceProvider, instant, chunkIndex = 0 } = (await req.json()) as {
+  const body = await req.json();
+  const { text, voiceName, voiceProvider, instant, chunkIndex = 0 } = body as {
     text: string;
-    voiceName: string;
+    voiceName: string | null;
     voiceProvider: VoiceProvider;
     instant: boolean;
     chunkIndex?: number;
   };
+
+  console.log("[API/TTS] Received request:", { 
+    textLength: text?.length, 
+    voiceName, 
+    voiceProvider, 
+    instant,
+    chunkIndex 
+  });
 
   if (!text || text.trim() === "") {
     return NextResponse.json(
@@ -68,10 +76,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Split text into manageable chunks
   const textChunks = splitTextIntoChunks(text.trim(), MAX_CHUNK_SIZE);
   
-  // If requesting a specific chunk, validate index
   if (chunkIndex >= textChunks.length) {
     return NextResponse.json(
       { error: "Chunk index out of range", totalChunks: textChunks.length },
@@ -81,37 +87,29 @@ export async function POST(req: NextRequest) {
 
   const currentText = textChunks[chunkIndex];
 
-  if (!voiceName && instant !== false) {
-    return NextResponse.json(
-      { error: "If using instant mode, a voice must be specified" },
-      { status: 400 }
-    );
-  }
+  // Build utterances with voice if specified
+  const utterances: PostedUtterance[] = voiceName
+    ? [
+        {
+          text: currentText,
+          voice: { name: voiceName, provider: voiceProvider || "HUME_AI" },
+        },
+      ]
+    : [{ text: currentText }];
+
+  console.log("[API/TTS] Calling Hume with utterances:", JSON.stringify(utterances));
 
   let upstreamHumeStream: Stream<SnippetAudioChunk>;
 
   try {
-    console.log(
-      `[HUME_TTS_PROXY] Requesting TTS stream for voice: ${voiceName}, chunk: ${chunkIndex + 1}/${textChunks.length}`
-    );
-    
-    const utterances: PostedUtterance[] = voiceName
-      ? [
-          {
-            text: currentText,
-            voice: { name: voiceName, provider: voiceProvider },
-          },
-        ]
-      : [{ text: currentText }];
-
     upstreamHumeStream = await humeClient.tts.synthesizeJsonStreaming({
-      utterances: utterances,
+      utterances,
       stripHeaders: true,
-      instantMode: instant !== false,
+      instantMode: instant !== false && !!voiceName, // instant mode requires a voice
     });
-    console.log("[HUME_TTS_PROXY] Successfully initiated Hume stream.");
+    console.log("[API/TTS] Successfully initiated Hume stream");
   } catch (error: any) {
-    console.error("[HUME_TTS_PROXY] Hume API call failed:", error);
+    console.error("[API/TTS] Hume API call failed:", error);
     const errorMessage = error?.message || "Failed to initiate TTS stream";
     const errorDetails = error?.error?.message || error?.error || errorMessage;
     return NextResponse.json(
@@ -123,14 +121,13 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const readableStream = new ReadableStream({
     async start(controller) {
-      console.log("[HUME_TTS_PROXY] Client connected, forwarding stream...");
-
       // Send metadata first
       const metadata = JSON.stringify({
         type: 'metadata',
         chunkIndex,
         totalChunks: textChunks.length,
         hasMore: chunkIndex < textChunks.length - 1,
+        voiceName, // Include voice for debugging
       }) + "\n";
       controller.enqueue(encoder.encode(metadata));
 
@@ -140,14 +137,11 @@ export async function POST(req: NextRequest) {
         const chunkBytes = encoder.encode(ndjsonLine);
         controller.enqueue(chunkBytes);
       }
-      console.log("[HUME_TTS_PROXY] Upstream Hume stream finished.");
+      console.log("[API/TTS] Stream complete");
       controller.close();
     },
     cancel(reason) {
-      console.log(
-        "[HUME_TTS_PROXY] Client disconnected, cancelling upstream Hume stream.",
-        reason
-      );
+      console.log("[API/TTS] Client disconnected:", reason);
       if (typeof (upstreamHumeStream as any)?.abort === "function") {
         (upstreamHumeStream as any).abort();
       }

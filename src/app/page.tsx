@@ -13,6 +13,7 @@ export default function Home() {
   
   const {
     isPlaying,
+    isPaused,
     isLoading,
     currentChunk,
     totalChunks,
@@ -23,13 +24,15 @@ export default function Home() {
     resume,
   } = useTts();
 
+  // Always start fresh with current text and voice
   const handlePlay = useCallback(() => {
-    if (isPlaying) {
+    if (isPaused) {
       resume();
     } else {
-      speak(text, selectedVoice, selectedVoice?.provider || "HUME_AI");
+      stop(); // Stop any existing playback first
+      speak(text, selectedVoice);
     }
-  }, [isPlaying, resume, speak, text, selectedVoice]);
+  }, [isPaused, resume, stop, speak, text, selectedVoice]);
 
   const handlePause = useCallback(() => {
     pause();
@@ -38,6 +41,14 @@ export default function Home() {
   const handleStop = useCallback(() => {
     stop();
   }, [stop]);
+
+  // When voice changes during playback, stop current audio
+  const handleVoiceSelect = useCallback((voice: ReturnVoice | null) => {
+    if (isPlaying || isPaused) {
+      stop();
+    }
+    setSelectedVoice(voice);
+  }, [isPlaying, isPaused, stop]);
 
   const canPlay = text.trim().length > 0 && selectedVoice !== null;
 
@@ -98,7 +109,7 @@ export default function Home() {
                   </h2>
                   <VoiceSelector
                     selectedVoice={selectedVoice}
-                    onSelect={setSelectedVoice}
+                    onSelect={handleVoiceSelect}
                   />
                 </div>
 

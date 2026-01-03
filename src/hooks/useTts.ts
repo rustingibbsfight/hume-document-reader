@@ -1,8 +1,9 @@
 import { useState, useRef, useCallback } from "react";
-import type { ReturnVoice, VoiceProvider } from "hume/api/resources/tts";
+import type { ReturnVoice } from "hume/api/resources/tts";
 
 interface TtsState {
   isPlaying: boolean;
+  isPaused: boolean;
   isLoading: boolean;
   currentChunk: number;
   totalChunks: number;
@@ -16,6 +17,7 @@ const isMediaSourceSupported = typeof window !== 'undefined' && 'MediaSource' in
 export function useTts() {
   const [state, setState] = useState<TtsState>({
     isPlaying: false,
+    isPaused: false,
     isLoading: false,
     currentChunk: 0,
     totalChunks: 0,
@@ -30,9 +32,9 @@ export function useTts() {
   const pendingChunksRef = useRef<Uint8Array[]>([]);
   const isAppendingRef = useRef(false);
   const streamCompleteRef = useRef(false);
-  const allAudioChunksRef = useRef<Uint8Array[]>([]);
 
   const cleanup = useCallback(() => {
+    console.log("[TTS] Cleanup called");
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -45,7 +47,6 @@ export function useTts() {
     mediaSourceRef.current = null;
     sourceBufferRef.current = null;
     pendingChunksRef.current = [];
-    allAudioChunksRef.current = [];
     isAppendingRef.current = false;
     streamCompleteRef.current = false;
   }, []);
@@ -80,13 +81,14 @@ export function useTts() {
     }
   }, []);
 
-  // Fallback playback for iOS/Safari (collect all chunks, then play)
+  // iOS fallback - collect chunks then play
   const speakFallback = useCallback(async (
     text: string,
-    voice: ReturnVoice | null,
-    voiceProvider: VoiceProvider
+    voice: ReturnVoice | null
   ) => {
     cleanup();
+    
+    console.log("[TTS] speakFallback called with voice:", voice?.name);
     
     // Create audio element immediately on user gesture
     const audio = new Audio();
@@ -94,19 +96,15 @@ export function useTts() {
     audio.setAttribute('webkit-playsinline', 'true');
     audioRef.current = audio;
     
-    // Play silent audio to unlock on iOS (must happen synchronously with user gesture)
+    // Unlock audio on iOS with silent audio
     const silentDataUri = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAGAAGn9AAAIgAANP8AAAARERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERER//tQxAADwAADSAAAAAAAAA0gAAABEREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREQ==';
     audio.src = silentDataUri;
-    
-    try {
-      await audio.play();
-    } catch (e) {
-      console.log("Silent audio play failed, continuing anyway:", e);
-    }
+    try { await audio.play(); } catch (e) { console.log("Silent play failed:", e); }
     
     setState(prev => ({
       ...prev,
       isPlaying: false,
+      isPaused: false,
       isLoading: true,
       currentChunk: 0,
       totalChunks: 0,
@@ -115,18 +113,21 @@ export function useTts() {
     }));
 
     abortControllerRef.current = new AbortController();
-    allAudioChunksRef.current = [];
+    const allChunks: Uint8Array[] = [];
 
     try {
+      const requestBody = {
+        text,
+        voiceName: voice?.name || null,
+        voiceProvider: voice?.provider || "HUME_AI",
+        instant: true,
+      };
+      console.log("[TTS] API request:", requestBody);
+
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          voiceName: voice?.name || null,
-          voiceProvider: voice?.provider || voiceProvider,
-          instant: !!voice,
-        }),
+        body: JSON.stringify(requestBody),
         signal: abortControllerRef.current.signal,
       });
 
@@ -149,10 +150,8 @@ export function useTts() {
 
         for (const line of lines) {
           if (!line.trim()) continue;
-          
           try {
             const data = JSON.parse(line);
-            
             if (data.type === 'metadata') {
               setState(prev => ({
                 ...prev,
@@ -162,22 +161,18 @@ export function useTts() {
             } else if (data.audio) {
               const bin = atob(data.audio);
               const bytes = new Uint8Array(bin.length);
-              for (let i = 0; i < bin.length; i++) {
-                bytes[i] = bin.charCodeAt(i);
-              }
-              allAudioChunksRef.current.push(bytes);
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+              allChunks.push(bytes);
             }
-          } catch (e) {
-            console.warn("Failed to parse line:", e);
-          }
+          } catch (e) {}
         }
       }
 
-      // Combine all chunks into a single blob
-      const totalLength = allAudioChunksRef.current.reduce((acc, chunk) => acc + chunk.length, 0);
+      // Combine all chunks
+      const totalLength = allChunks.reduce((acc, chunk) => acc + chunk.length, 0);
       const combined = new Uint8Array(totalLength);
       let offset = 0;
-      for (const chunk of allAudioChunksRef.current) {
+      for (const chunk of allChunks) {
         combined.set(chunk, offset);
         offset += chunk.length;
       }
@@ -185,16 +180,13 @@ export function useTts() {
       const blob = new Blob([combined], { type: 'audio/mpeg' });
       const url = URL.createObjectURL(blob);
       
-      // Reuse the same audio element (already unlocked)
       audio.src = url;
-      
       audio.onended = () => {
-        setState(prev => ({ ...prev, isPlaying: false, progress: 100 }));
+        setState(prev => ({ ...prev, isPlaying: false, isPaused: false, progress: 100 }));
         URL.revokeObjectURL(url);
       };
-
       audio.onerror = (e) => {
-        console.error("Audio playback error:", e);
+        console.error("Audio error:", e);
         setState(prev => ({ ...prev, isPlaying: false, error: "Playback error" }));
       };
 
@@ -202,30 +194,27 @@ export function useTts() {
       await audio.play();
 
     } catch (error: any) {
-      if (error.name === "AbortError") {
-        console.log("TTS request aborted");
-      } else {
-        console.error("TTS error:", error);
-        setState(prev => ({
-          ...prev,
-          error: error.message || "Failed to generate speech",
-        }));
+      if (error.name !== "AbortError") {
+        console.error("[TTS] Error:", error);
+        setState(prev => ({ ...prev, error: error.message || "Failed to generate speech" }));
       }
-      setState(prev => ({ ...prev, isPlaying: false, isLoading: false }));
+      setState(prev => ({ ...prev, isPlaying: false, isPaused: false, isLoading: false }));
     }
   }, [cleanup]);
 
-  // Streaming playback using MediaSource (for Chrome, Firefox, Edge)
+  // Desktop streaming with MediaSource
   const speakStreaming = useCallback(async (
     text: string,
-    voice: ReturnVoice | null,
-    voiceProvider: VoiceProvider
+    voice: ReturnVoice | null
   ) => {
     cleanup();
+    
+    console.log("[TTS] speakStreaming called with voice:", voice?.name);
     
     setState(prev => ({
       ...prev,
       isPlaying: true,
+      isPaused: false,
       isLoading: true,
       currentChunk: 0,
       totalChunks: 0,
@@ -248,34 +237,30 @@ export function useTts() {
           try {
             const sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
             sourceBufferRef.current = sourceBuffer;
-            
             sourceBuffer.addEventListener("updateend", () => {
               isAppendingRef.current = false;
               appendNextChunk();
             });
-            
             resolve();
-          } catch (e) {
-            reject(e);
-          }
+          } catch (e) { reject(e); }
         }, { once: true });
-        
-        mediaSource.addEventListener("error", () => {
-          reject(new Error("MediaSource error"));
-        }, { once: true });
+        mediaSource.addEventListener("error", () => reject(new Error("MediaSource error")), { once: true });
       });
 
       audio.play().catch(console.warn);
 
+      const requestBody = {
+        text,
+        voiceName: voice?.name || null,
+        voiceProvider: voice?.provider || "HUME_AI",
+        instant: true,
+      };
+      console.log("[TTS] API request:", requestBody);
+
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          voiceName: voice?.name || null,
-          voiceProvider: voice?.provider || voiceProvider,
-          instant: !!voice,
-        }),
+        body: JSON.stringify(requestBody),
         signal: abortControllerRef.current.signal,
       });
 
@@ -300,10 +285,8 @@ export function useTts() {
 
         for (const line of lines) {
           if (!line.trim()) continue;
-          
           try {
             const data = JSON.parse(line);
-            
             if (data.type === 'metadata') {
               setState(prev => ({
                 ...prev,
@@ -313,15 +296,11 @@ export function useTts() {
             } else if (data.audio) {
               const bin = atob(data.audio);
               const bytes = new Uint8Array(bin.length);
-              for (let i = 0; i < bin.length; i++) {
-                bytes[i] = bin.charCodeAt(i);
-              }
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
               pendingChunksRef.current.push(bytes);
               appendNextChunk();
             }
-          } catch (e) {
-            console.warn("Failed to parse line:", e);
-          }
+          } catch (e) {}
         }
       }
 
@@ -333,36 +312,25 @@ export function useTts() {
         if (audio.ended) resolve();
       });
 
-      setState(prev => ({
-        ...prev,
-        isPlaying: false,
-        progress: 100,
-      }));
+      setState(prev => ({ ...prev, isPlaying: false, isPaused: false, progress: 100 }));
 
     } catch (error: any) {
-      if (error.name === "AbortError") {
-        console.log("TTS request aborted");
-      } else {
-        console.error("TTS error:", error);
-        setState(prev => ({
-          ...prev,
-          error: error.message || "Failed to generate speech",
-        }));
+      if (error.name !== "AbortError") {
+        console.error("[TTS] Error:", error);
+        setState(prev => ({ ...prev, error: error.message || "Failed to generate speech" }));
       }
-      setState(prev => ({ ...prev, isPlaying: false, isLoading: false }));
+      setState(prev => ({ ...prev, isPlaying: false, isPaused: false, isLoading: false }));
     }
   }, [cleanup, appendNextChunk]);
 
-  // Choose the right method based on browser support
-  const speak = useCallback(async (
-    text: string,
-    voice: ReturnVoice | null,
-    voiceProvider: VoiceProvider
-  ) => {
+  // Main speak function - takes voice directly as parameter
+  const speak = useCallback((text: string, voice: ReturnVoice | null) => {
+    console.log("[TTS] speak() called with voice:", voice?.name, "provider:", voice?.provider);
+    
     if (isMediaSourceSupported) {
-      return speakStreaming(text, voice, voiceProvider);
+      return speakStreaming(text, voice);
     } else {
-      return speakFallback(text, voice, voiceProvider);
+      return speakFallback(text, voice);
     }
   }, [speakStreaming, speakFallback]);
 
@@ -371,18 +339,23 @@ export function useTts() {
     setState(prev => ({
       ...prev,
       isPlaying: false,
+      isPaused: false,
       isLoading: false,
     }));
   }, [cleanup]);
 
   const pause = useCallback(() => {
-    audioRef.current?.pause();
-    setState(prev => ({ ...prev, isPlaying: false }));
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    setState(prev => ({ ...prev, isPlaying: false, isPaused: true }));
   }, []);
 
   const resume = useCallback(() => {
-    audioRef.current?.play();
-    setState(prev => ({ ...prev, isPlaying: true }));
+    if (audioRef.current) {
+      audioRef.current.play().catch(console.warn);
+    }
+    setState(prev => ({ ...prev, isPlaying: true, isPaused: false }));
   }, []);
 
   return {
