@@ -20,6 +20,23 @@ export default function VoiceSelector({ selectedVoice, onSelect }: Props) {
     v.name?.toLowerCase().includes(query.toLowerCase())
   );
 
+  function handleVoiceClick(voice: ReturnVoice) {
+    console.log("[VoiceSelector] handleVoiceClick - voice:", voice.name, "id:", voice.id);
+    
+    // Close dropdown and clear search first
+    setIsOpen(false);
+    setQuery("");
+    
+    // Then call parent's onSelect with the clicked voice
+    console.log("[VoiceSelector] Calling onSelect with:", voice.name);
+    onSelect(voice);
+  }
+
+  function handleClear() {
+    console.log("[VoiceSelector] handleClear called");
+    onSelect(null);
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -95,11 +112,8 @@ export default function VoiceSelector({ selectedVoice, onSelect }: Props) {
                   {filteredVoices.map((voice) => (
                     <li key={voice.id}>
                       <button
-                        onClick={() => {
-                          onSelect(voice);
-                          setIsOpen(false);
-                          setQuery("");
-                        }}
+                        type="button"
+                        onClick={() => handleVoiceClick(voice)}
                         className={`w-full text-left px-4 py-2 text-sm hover:bg-indigo-50 transition-colors ${
                           selectedVoice?.id === voice.id ? "bg-indigo-100 text-indigo-700" : "text-gray-700"
                         }`}
@@ -117,7 +131,8 @@ export default function VoiceSelector({ selectedVoice, onSelect }: Props) {
 
       {selectedVoice && (
         <button
-          onClick={() => onSelect(null)}
+          type="button"
+          onClick={handleClear}
           className="text-xs text-gray-500 hover:text-gray-700 underline"
         >
           Clear selection

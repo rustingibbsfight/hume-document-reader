@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState } from "react";
 import type { ReturnVoice } from "hume/api/resources/tts";
 import DocumentInput from "@/components/DocumentInput";
 import VoiceSelector from "@/components/VoiceSelector";
@@ -7,22 +7,12 @@ import PlaybackControls from "@/components/PlaybackControls";
 import { useTts } from "@/hooks/useTts";
 import { SpeakerWaveIcon, BookOpenIcon } from "@heroicons/react/24/outline";
 
+// Store voice outside React entirely - this will never be stale
+let globalVoice: ReturnVoice | null = null;
+
 export default function Home() {
   const [text, setText] = useState("");
   const [selectedVoice, setSelectedVoice] = useState<ReturnVoice | null>(null);
-  
-  // Use refs to always have current values (avoids stale closures on iOS)
-  const textRef = useRef(text);
-  const selectedVoiceRef = useRef(selectedVoice);
-  
-  // Keep refs in sync with state
-  useEffect(() => {
-    textRef.current = text;
-  }, [text]);
-  
-  useEffect(() => {
-    selectedVoiceRef.current = selectedVoice;
-  }, [selectedVoice]);
   
   const {
     isPlaying,
@@ -37,37 +27,42 @@ export default function Home() {
     resume,
   } = useTts();
 
-  const handlePlay = useCallback(() => {
+  function handlePlay() {
+    console.log("[Page] handlePlay called");
+    console.log("[Page] globalVoice:", globalVoice?.name);
+    console.log("[Page] selectedVoice state:", selectedVoice?.name);
+    
     if (isPaused) {
       resume();
     } else {
       stop();
-      // Use refs to get current values, not potentially stale state
-      const currentText = textRef.current;
-      const currentVoice = selectedVoiceRef.current;
-      console.log("[Page] handlePlay with voice:", currentVoice?.name);
-      speak(currentText, currentVoice);
+      // Use globalVoice which is guaranteed to be current
+      speak(text, globalVoice);
     }
-  }, [isPaused, resume, stop, speak]);
+  }
 
-  const handlePause = useCallback(() => {
+  function handlePause() {
     pause();
-  }, [pause]);
+  }
 
-  const handleStop = useCallback(() => {
+  function handleStop() {
     stop();
-  }, [stop]);
+  }
 
-  const handleVoiceSelect = useCallback((voice: ReturnVoice | null) => {
-    console.log("[Page] Voice selected:", voice?.name);
-    // Update both state and ref immediately
+  function handleVoiceSelect(voice: ReturnVoice | null) {
+    console.log("[Page] handleVoiceSelect called with:", voice?.name);
+    
+    // Update global variable FIRST (completely synchronous, outside React)
+    globalVoice = voice;
+    console.log("[Page] globalVoice updated to:", globalVoice?.name);
+    
+    // Then update React state
     setSelectedVoice(voice);
-    selectedVoiceRef.current = voice;
     
     if (isPlaying || isPaused) {
       stop();
     }
-  }, [isPlaying, isPaused, stop]);
+  }
 
   const canPlay = text.trim().length > 0 && selectedVoice !== null;
 
