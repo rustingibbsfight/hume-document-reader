@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import type { ReturnVoice } from "hume/api/resources/tts";
 import DocumentInput from "@/components/DocumentInput";
 import VoiceSelector from "@/components/VoiceSelector";
@@ -10,6 +10,19 @@ import { SpeakerWaveIcon, BookOpenIcon } from "@heroicons/react/24/outline";
 export default function Home() {
   const [text, setText] = useState("");
   const [selectedVoice, setSelectedVoice] = useState<ReturnVoice | null>(null);
+  
+  // Use refs to always have current values (avoids stale closures on iOS)
+  const textRef = useRef(text);
+  const selectedVoiceRef = useRef(selectedVoice);
+  
+  // Keep refs in sync with state
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
+  
+  useEffect(() => {
+    selectedVoiceRef.current = selectedVoice;
+  }, [selectedVoice]);
   
   const {
     isPlaying,
@@ -24,15 +37,18 @@ export default function Home() {
     resume,
   } = useTts();
 
-  // Always start fresh with current text and voice
   const handlePlay = useCallback(() => {
     if (isPaused) {
       resume();
     } else {
-      stop(); // Stop any existing playback first
-      speak(text, selectedVoice);
+      stop();
+      // Use refs to get current values, not potentially stale state
+      const currentText = textRef.current;
+      const currentVoice = selectedVoiceRef.current;
+      console.log("[Page] handlePlay with voice:", currentVoice?.name);
+      speak(currentText, currentVoice);
     }
-  }, [isPaused, resume, stop, speak, text, selectedVoice]);
+  }, [isPaused, resume, stop, speak]);
 
   const handlePause = useCallback(() => {
     pause();
@@ -42,12 +58,15 @@ export default function Home() {
     stop();
   }, [stop]);
 
-  // When voice changes during playback, stop current audio
   const handleVoiceSelect = useCallback((voice: ReturnVoice | null) => {
+    console.log("[Page] Voice selected:", voice?.name);
+    // Update both state and ref immediately
+    setSelectedVoice(voice);
+    selectedVoiceRef.current = voice;
+    
     if (isPlaying || isPaused) {
       stop();
     }
-    setSelectedVoice(voice);
   }, [isPlaying, isPaused, stop]);
 
   const canPlay = text.trim().length > 0 && selectedVoice !== null;
