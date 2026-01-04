@@ -35,7 +35,7 @@ export default function VoiceSelector({ selectedVoice, onSelect }: Props) {
       abortControllerRef.current.abort();
     }
 
-    setPreviewingVoiceId(voice.id);
+    setPreviewingVoiceId(voice.id ?? null);
     abortControllerRef.current = new AbortController();
 
     try {
