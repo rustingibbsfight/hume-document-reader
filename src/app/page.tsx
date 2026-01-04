@@ -10,9 +10,11 @@ import { SpeakerWaveIcon, BookOpenIcon } from "@heroicons/react/24/outline";
 export default function Home() {
   const [text, setText] = useState("");
   const [selectedVoice, setSelectedVoice] = useState<ReturnVoice | null>(null);
+  const [speed, setSpeed] = useState(1.0);
   
-  // This ref is passed to useTts - the hook reads directly from it
+  // These refs are passed to useTts - the hook reads directly from them
   const voiceRef = useRef<ReturnVoice | null>(null);
+  const speedRef = useRef<number>(1.0);
   
   const {
     isPlaying,
@@ -25,11 +27,9 @@ export default function Home() {
     stop,
     pause,
     resume,
-  } = useTts(voiceRef);
+  } = useTts(voiceRef, speedRef);
 
   function handlePlay() {
-    console.log("[Page] handlePlay - voiceRef.current:", voiceRef.current?.name);
-    
     if (isPaused) {
       resume();
     } else {
@@ -47,19 +47,17 @@ export default function Home() {
   }
 
   function handleVoiceSelect(voice: ReturnVoice | null) {
-    console.log("[Page] handleVoiceSelect:", voice?.name);
-    
-    // Update ref IMMEDIATELY (synchronous, no React batching)
     voiceRef.current = voice;
-    
-    // Also update state for UI
     setSelectedVoice(voice);
-    
-    console.log("[Page] voiceRef.current is now:", voiceRef.current?.name);
     
     if (isPlaying || isPaused) {
       stop();
     }
+  }
+
+  function handleSpeedChange(newSpeed: number) {
+    speedRef.current = newSpeed;
+    setSpeed(newSpeed);
   }
 
   const canPlay = text.trim().length > 0 && selectedVoice !== null;
@@ -89,7 +87,7 @@ export default function Home() {
               className="text-indigo-600 font-semibold hover:text-indigo-700 flex items-center gap-1"
             >
               <SpeakerWaveIcon className="w-4 h-4" />
-              Hume AI Octave TTS
+              Hume AI Octave 2 TTS
             </a>
           </div>
         </div>
@@ -135,9 +133,11 @@ export default function Home() {
                     isPlaying={isPlaying}
                     isLoading={isLoading}
                     canPlay={canPlay}
+                    speed={speed}
                     onPlay={handlePlay}
                     onPause={handlePause}
                     onStop={handleStop}
+                    onSpeedChange={handleSpeedChange}
                     currentChunk={currentChunk}
                     totalChunks={totalChunks}
                     error={error}
@@ -176,8 +176,8 @@ export default function Home() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
-            <h3 className="font-semibold text-gray-900">Instant Streaming</h3>
-            <p className="text-sm text-gray-500 mt-1">Ultra-low latency audio generation starts immediately</p>
+            <h3 className="font-semibold text-gray-900">Variable Speed</h3>
+            <p className="text-sm text-gray-500 mt-1">Adjust playback from 0.5x to 2x speed with Octave 2</p>
           </div>
         </div>
 

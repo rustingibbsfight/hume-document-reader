@@ -10,27 +10,60 @@ interface Props {
   isPlaying: boolean;
   isLoading: boolean;
   canPlay: boolean;
+  speed: number;
   onPlay: () => void;
   onPause: () => void;
   onStop: () => void;
+  onSpeedChange: (speed: number) => void;
   currentChunk?: number;
   totalChunks?: number;
   error?: string | null;
 }
 
+const SPEED_OPTIONS = [
+  { value: 0.5, label: "0.5x" },
+  { value: 0.75, label: "0.75x" },
+  { value: 1.0, label: "1x" },
+  { value: 1.25, label: "1.25x" },
+  { value: 1.5, label: "1.5x" },
+  { value: 2.0, label: "2x" },
+];
+
 export default function PlaybackControls({
   isPlaying,
   isLoading,
   canPlay,
+  speed,
   onPlay,
   onPause,
   onStop,
+  onSpeedChange,
   currentChunk = 0,
   totalChunks = 0,
   error,
 }: Props) {
   return (
     <div className="space-y-4">
+      {/* Speed Control */}
+      <div className="flex items-center justify-center gap-2">
+        <span className="text-xs text-gray-500 mr-1">Speed:</span>
+        <div className="flex bg-gray-100 rounded-lg p-1">
+          {SPEED_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => onSpeedChange(option.value)}
+              className={`px-2 py-1 text-xs font-medium rounded transition-all ${
+                speed === option.value
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Main Controls */}
       <div className="flex items-center justify-center gap-4">
         {/* Stop Button */}
@@ -79,6 +112,13 @@ export default function PlaybackControls({
         </div>
       </div>
 
+      {/* Current Speed Display when playing */}
+      {isPlaying && speed !== 1.0 && (
+        <p className="text-center text-xs text-indigo-600 font-medium">
+          Playing at {speed}x speed
+        </p>
+      )}
+
       {/* Progress Info */}
       {(isPlaying || isLoading) && totalChunks > 0 && (
         <div className="text-center">
@@ -97,7 +137,7 @@ export default function PlaybackControls({
       {/* Status Messages */}
       {isLoading && (
         <p className="text-center text-sm text-indigo-600">
-          Generating speech...
+          Generating speech{speed !== 1.0 ? ` at ${speed}x speed` : ""}...
         </p>
       )}
 

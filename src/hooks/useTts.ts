@@ -9,12 +9,16 @@ interface TtsState {
   totalChunks: number;
   progress: number;
   error: string | null;
+  speed: number;
 }
 
 // Check if MediaSource is supported (not on iOS Safari)
 const isMediaSourceSupported = typeof window !== 'undefined' && 'MediaSource' in window;
 
-export function useTts(voiceRef: MutableRefObject<ReturnVoice | null>) {
+export function useTts(
+  voiceRef: MutableRefObject<ReturnVoice | null>,
+  speedRef: MutableRefObject<number>
+) {
   const [state, setState] = useState<TtsState>({
     isPlaying: false,
     isPaused: false,
@@ -23,6 +27,7 @@ export function useTts(voiceRef: MutableRefObject<ReturnVoice | null>) {
     totalChunks: 0,
     progress: 0,
     error: null,
+    speed: 1.0,
   });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -77,12 +82,20 @@ export function useTts(voiceRef: MutableRefObject<ReturnVoice | null>) {
     }
   }
 
+  // Set playback rate on current audio element
+  function setPlaybackRate(rate: number) {
+    if (audioRef.current) {
+      audioRef.current.playbackRate = rate;
+    }
+    setState(prev => ({ ...prev, speed: rate }));
+  }
+
   async function speakFallback(text: string) {
     cleanup();
     
-    // Read voice from ref RIGHT NOW - not from a parameter
     const voice = voiceRef.current;
-    console.log("[TTS] speakFallback - reading voiceRef.current:", voice?.name);
+    const speed = speedRef.current;
+    console.log("[TTS] speakFallback - voice:", voice?.name, "speed:", speed);
     
     const audio = new Audio();
     audio.setAttribute('playsinline', 'true');
@@ -106,20 +119,21 @@ export function useTts(voiceRef: MutableRefObject<ReturnVoice | null>) {
       totalChunks: 0,
       progress: 0,
       error: null,
+      speed,
     }));
 
     abortControllerRef.current = new AbortController();
 
     try {
-      // Read voice from ref AGAIN right before API call - guaranteed fresh
       const currentVoice = voiceRef.current;
-      console.log("[TTS] About to call API with voice:", currentVoice?.name);
+      const currentSpeed = speedRef.current;
       
       const requestBody = {
         text,
         voiceName: currentVoice?.name || null,
         voiceProvider: currentVoice?.provider || "HUME_AI",
         instant: true,
+        speed: currentSpeed,
       };
 
       const res = await fetch("/api/tts", {
@@ -198,9 +212,9 @@ export function useTts(voiceRef: MutableRefObject<ReturnVoice | null>) {
   async function speakStreaming(text: string) {
     cleanup();
     
-    // Read voice from ref
     const voice = voiceRef.current;
-    console.log("[TTS] speakStreaming - reading voiceRef.current:", voice?.name);
+    const speed = speedRef.current;
+    console.log("[TTS] speakStreaming - voice:", voice?.name, "speed:", speed);
     
     setState(prev => ({
       ...prev,
@@ -211,6 +225,7 @@ export function useTts(voiceRef: MutableRefObject<ReturnVoice | null>) {
       totalChunks: 0,
       progress: 0,
       error: null,
+      speed,
     }));
 
     abortControllerRef.current = new AbortController();
@@ -245,6 +260,7 @@ export function useTts(voiceRef: MutableRefObject<ReturnVoice | null>) {
         voiceName: voice?.name || null,
         voiceProvider: voice?.provider || "HUME_AI",
         instant: true,
+        speed,
       };
 
       const res = await fetch("/api/tts", {
@@ -313,7 +329,7 @@ export function useTts(voiceRef: MutableRefObject<ReturnVoice | null>) {
   }
 
   function speak(text: string) {
-    console.log("[TTS] speak() called, voiceRef.current:", voiceRef.current?.name);
+    console.log("[TTS] speak() called, voice:", voiceRef.current?.name, "speed:", speedRef.current);
     
     if (isMediaSourceSupported) {
       speakStreaming(text);
@@ -352,5 +368,6 @@ export function useTts(voiceRef: MutableRefObject<ReturnVoice | null>) {
     stop,
     pause,
     resume,
+    setPlaybackRate,
   };
 }
