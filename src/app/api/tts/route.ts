@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { humeClient } from "@/lib/humeClient";
-import type { Stream } from "hume/core";
 import type {
   PostedUtterance,
-  SnippetAudioChunk,
   VoiceProvider,
 } from "hume/api/resources/tts";
 
@@ -125,7 +123,7 @@ export async function POST(req: NextRequest) {
 
   console.log("[API/TTS] Calling Hume with utterances:", JSON.stringify(utterances));
 
-  let upstreamHumeStream: Stream<SnippetAudioChunk>;
+  let upstreamHumeStream: AsyncIterable<any>;
 
   try {
     upstreamHumeStream = await humeClient.tts.synthesizeJsonStreaming({
